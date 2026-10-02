@@ -67,7 +67,7 @@ export const FX: Record<Tier, FxTier> = {
     scrubPop: true,
     reunionWave: "simple",
     coreShimmer: false,
-    mistMotes: 24,
+    mistMotes: 48,
     labelEase: true,
     frameGuardMs: 0,
   },
@@ -90,7 +90,7 @@ export const FX: Record<Tier, FxTier> = {
     scrubPop: true,
     reunionWave: "full",
     coreShimmer: true,
-    mistMotes: 40,
+    mistMotes: 90,
     labelEase: true,
     frameGuardMs: 24,
   },
@@ -113,7 +113,7 @@ export const FX: Record<Tier, FxTier> = {
     scrubPop: true,
     reunionWave: "full",
     coreShimmer: true,
-    mistMotes: 60,
+    mistMotes: 140,
     labelEase: true,
     frameGuardMs: 24,
   },
@@ -200,16 +200,16 @@ export const TUNING = {
 /** The void: a slab around the silence arc of the time spiral + the black hole. */
 export const VOID_RULE = {
   /** horizontal half-width of the silence band around its spiral centreline */
-  halfWidth: 11,
+  halfWidth: 14,
   /** vertical half-thickness of the void slab (strands ±2.8, mist ±6) */
-  slab: 8,
+  slab: 10,
   /** exclusion buffer multiplier (+12%) */
   buffer: 1.12,
-  /** black hole + accretion disc radius */
-  holeRadius: 26,
+  /** black hole + accretion disc radius — enlarged for the giant silence world */
+  holeRadius: 44,
   /** extra clearance for streaks / UFO paths */
-  streakMargin: 4,
-  ufoMargin: 6,
+  streakMargin: 6,
+  ufoMargin: 8,
 };
 
 export type ExpTier = {

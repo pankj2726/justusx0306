@@ -277,13 +277,14 @@ export class GalaxyScene {
   private trailHead = 0;
   private trailBirth!: Float32Array;
 
-  /* the silence: black hole with accretion disc + lensed photon ring */
+  /* the silence: GIANT black hole — detailed world with accretion disc, photon rings, corona, jets */
   private holeGroup = new THREE.Group();
   private holeDiskGroup = new THREE.Group();
   private holeHaloGroup = new THREE.Group();
   private holeDisk!: THREE.Points;
   private holeDiskU!: SparkUniforms;
   private holeHaloU!: SparkUniforms;
+  private holeExtraUs: SparkUniforms[] = [];
   private diskR!: Float32Array;
   private diskA!: Float32Array;
   private diskY!: Float32Array;
@@ -748,31 +749,34 @@ export class GalaxyScene {
       this.holeGroup.position.copy(this.holeCenter);
       this.world.add(this.holeGroup);
 
-      /* the shadow: true void, occludes every sparkle behind it */
-      const vg = new THREE.SphereGeometry(6, 48, 32);
+      /* the shadow: true void, occludes every sparkle behind it — GIANT SILENCE PLANET */
+      const vg = new THREE.SphereGeometry(12, 64, 48);
       const vm = new THREE.MeshBasicMaterial({ color: 0x000000 });
       this.holeGroup.add(new THREE.Mesh(vg, vm));
       this.disposables.push(vg, vm);
 
-      /* disc frame, posed against the silence camera: near side of the disc
-         sweeps across the lower face of the shadow, far side behind the top */
+      /* GIANT disc frame — posed so near side sweeps across lower face, far side behind top.
+         Larger camera offset (58 vs 36) to frame the 12-radius giant. */
+      const HOLE_R = 12;
       const silTarget = new THREE.Vector3(Math.cos(ha) * hr, 0, Math.sin(ha) * hr);
       const silDir = silTarget.clone().setY(0).normalize();
-      const silCam = silTarget.clone().add(silDir.multiplyScalar(36)).add(new THREE.Vector3(0, 11, 0));
+      const silCam = silTarget.clone().add(silDir.multiplyScalar(58)).add(new THREE.Vector3(0, 18, 0));
       const fwd = silCam.clone().sub(this.holeCenter).normalize();
       const right0 = new THREE.Vector3(0, 1, 0).cross(fwd).normalize();
       const upP = fwd.clone().cross(right0).normalize();
-      const open = 1.15; // tilt of the disc normal away from the view axis
+      const open = 1.12;
       const nrm = fwd.clone().multiplyScalar(Math.cos(open)).addScaledVector(upP, Math.sin(open));
       const xA = right0.clone();
       const zA = xA.clone().cross(nrm).normalize();
-      xA.applyAxisAngle(nrm, 0.12);
-      zA.applyAxisAngle(nrm, 0.12);
+      xA.applyAxisAngle(nrm, 0.14);
+      zA.applyAxisAngle(nrm, 0.14);
       const bm = new THREE.Matrix4().makeBasis(xA, nrm, zA);
       this.holeDiskGroup.quaternion.setFromRotationMatrix(bm);
       this.holeGroup.add(this.holeDiskGroup);
+      this.holeGroup.add(this.holeHaloGroup);
+      this.holeExtraUs = [];
 
-      const n = Math.round(2600 * M);
+      const n = Math.round(6800 * M);
       this.diskR = new Float32Array(n);
       this.diskA = new Float32Array(n);
       this.diskY = new Float32Array(n);
@@ -783,27 +787,70 @@ export class GalaxyScene {
       const alpha = new Float32Array(n);
       const ph = new Float32Array(n);
       const spd = new Float32Array(n);
-      const rr = rngFor("hole-disk");
+      const rr = rngFor("hole-disk-giant");
+      const COLD = new THREE.Color("#8aa0c0");
+      const WARM = new THREE.Color("#ffe9b0");
       for (let i = 0; i < n; i++) {
-        const band = rr() < 0.34; // dense bright inner ring: the face-crossing band
-        const f = band ? Math.pow(rr(), 0.8) * 0.19 : Math.pow(rr(), 0.6);
-        const r = 6.8 + f * 19;
-        const a = rr() * Math.PI * 2;
+        const roll = rr();
+        let r: number;
+        let band: 0 | 1 | 2 | 3;
+        if (roll < 0.16) {
+          band = 0;
+          r = HOLE_R + 0.35 + Math.pow(rr(), 0.9) * 1.8 + rr() * 0.3;
+        } else if (roll < 0.46) {
+          band = 1;
+          r = HOLE_R + 1.8 + Math.pow(rr(), 0.72) * 9.2;
+        } else if (roll < 0.8) {
+          band = 2;
+          r = 23 + Math.pow(rr(), 0.78) * 13;
+        } else {
+          band = 3;
+          r = 36 + Math.pow(rr(), 0.85) * 12 + rr() * 1.5;
+        }
+        let a = rr() * Math.PI * 2;
+        if (band >= 2) {
+          const spiral = Math.log(Math.max(1, r - 8)) * 1.6;
+          a += spiral * (band === 2 ? 1 : 0.7);
+          if (rr() < 0.5) a += Math.PI;
+        }
         this.diskR[i] = r;
         this.diskA[i] = a;
-        this.diskY[i] = (rr() - 0.5) * (0.35 + (r - 6.8) * 0.06);
+        const thickness = band === 0 ? 0.22 : band === 1 ? 0.45 + (r - HOLE_R) * 0.06 : band === 2 ? 0.7 + (r - 23) * 0.09 : 1.1 + (r - 36) * 0.14;
+        this.diskY[i] = (rr() - 0.5) * thickness + (rr() < 0.12 ? (rr() - 0.5) * 1.8 : 0);
         pos[i * 3] = Math.cos(a) * r;
         pos[i * 3 + 1] = this.diskY[i];
         pos[i * 3 + 2] = Math.sin(a) * r;
-        const c = WHITE.clone().lerp(VIOLET, 0.2 + f * 0.7).lerp(MAGENTA, rr() * 0.25);
+
+        const isHot = rr() < 0.045;
+        const isClump = band === 3 && rr() < 0.28;
+        let c: THREE.Color;
+        if (band === 0) c = WHITE.clone().lerp(GOLD, rr() * 0.25).lerp(WARM, 0.35);
+        else if (band === 1) c = WHITE.clone().lerp(VIOLET, 0.18 + rr() * 0.35).lerp(MAGENTA, rr() * 0.35).lerp(GOLD, rr() * 0.12);
+        else if (band === 2) c = VIOLET.clone().lerp(MAGENTA, 0.25 + rr() * 0.5).lerp(PERIWINKLE, rr() * 0.3).lerp(WHITE, rr() * 0.12);
+        else c = PERIWINKLE.clone().lerp(COLD, 0.4 + rr() * 0.4).lerp(WHITE, rr() * 0.08);
+        if (isHot) c = WHITE.clone().lerp(GOLD, 0.15);
+        if (isClump) c.lerp(WHITE, 0.22);
+
         col[i * 3] = c.r;
         col[i * 3 + 1] = c.g;
         col[i * 3 + 2] = c.b;
-        size[i] = band ? 1.2 + rr() * 1.2 : (0.9 + rr() * 1.3) * (1.3 - f * 0.6);
-        this.diskBase[i] = band ? 0.8 + rr() * 0.2 : (1 - f) * 0.65 + 0.3 + rr() * 0.15;
+
+        const armPhase = (a * 2 + Math.log(r) * 3.2) % (Math.PI * 2);
+        const inArm = Math.sin(armPhase) > 0.62 ? 1.28 : 1;
+
+        if (band === 0) size[i] = (1.6 + rr() * 1.8) * (isHot ? 1.8 : 1) * inArm;
+        else if (band === 1) size[i] = (1.15 + rr() * 1.3) * (isHot ? 1.6 : 1) * inArm;
+        else if (band === 2) size[i] = (0.85 + rr() * 1.1) * (isHot ? 1.5 : 1) * inArm;
+        else size[i] = (0.6 + rr() * 1.0) * (isClump ? 1.6 : 1) * inArm;
+
+        if (band === 0) this.diskBase[i] = 0.92 + rr() * 0.18;
+        else if (band === 1) this.diskBase[i] = 0.62 + rr() * 0.32 + (isHot ? 0.18 : 0);
+        else if (band === 2) this.diskBase[i] = 0.42 + rr() * 0.32;
+        else this.diskBase[i] = (isClump ? 0.38 : 0.18) + rr() * 0.22;
+
         alpha[i] = this.diskBase[i];
         ph[i] = rr() * Math.PI * 2;
-        spd[i] = 0.4 + rr() * 1.2;
+        spd[i] = (band === 0 ? 1.2 : band === 1 ? 0.8 : 0.45) + rr() * 0.9;
       }
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
@@ -812,38 +859,200 @@ export class GalaxyScene {
       g.setAttribute("aAlpha", new THREE.BufferAttribute(alpha, 1));
       g.setAttribute("aPhase", new THREE.BufferAttribute(ph, 1));
       g.setAttribute("aSpeed", new THREE.BufferAttribute(spd, 1));
-      const dm = mk(0.35);
+      const dm = mk(0.38);
       this.holeDiskU = dm.u;
       this.holeDisk = new THREE.Points(g, dm.mat);
       this.holeDisk.frustumCulled = false;
       this.holeDiskGroup.add(this.holeDisk);
       this.disposables.push(g, dm.mat);
 
-      /* lensed photon ring: vertical sparkle ring, billboards to camera */
-      this.holeGroup.add(this.holeHaloGroup);
-      const hn = Math.round(900 * M);
-      const hb = new CloudBuilder();
-      const hr2 = rngFor("hole-halo");
-      for (let i = 0; i < hn; i++) {
-        const th = hr2() * Math.PI * 2;
-        const R = 6.5 + hr2() * 1.0;
-        const v = new THREE.Vector3(Math.cos(th) * R, Math.sin(th) * R, (hr2() - 0.5) * 0.6);
-        const c = WHITE.clone().lerp(VIOLET, 0.15 + hr2() * 0.5);
-        const top = 0.5 + 0.5 * Math.sin(th); // lensed image blazes over the top
-        hb.push(v, c, 0.7 + hr2() * 1.0 + top * 0.6, 0.2 + 0.6 * Math.pow(top, 1.4) + hr2() * 0.12, hr2);
-      }
-      const hm2 = mk(0.5);
-      this.holeHaloU = hm2.u;
-      const hpts = new THREE.Points(hb.geometry(), hm2.mat);
-      hpts.frustumCulled = false;
-      this.holeHaloGroup.add(hpts);
-      this.disposables.push(hpts.geometry, hm2.mat);
+      // --- GIANT DETAILED HALO SYSTEM — multiple photon rings, corona, jets, infall ---
+      const addHaloLayer = (
+        key: string,
+        builder: (b: CloudBuilder, rng: () => number) => void,
+        tw: number,
+        holder: THREE.Group
+      ) => {
+        const cb = new CloudBuilder();
+        const rgen = rngFor(key);
+        builder(cb, rgen);
+        const mm = mk(tw);
+        const pts = new THREE.Points(cb.geometry(), mm.mat);
+        pts.frustumCulled = false;
+        holder.add(pts);
+        this.disposables.push(pts.geometry, mm.mat);
+        this.holeExtraUs.push(mm.u);
+        return { pts, u: mm.u };
+      };
 
-      /* navigation: the hole is hoverable & clickable -> silence state */
+      // primary photon ring — razor thin, ultra bright, lensed blaze over top
+      const primary = addHaloLayer(
+        "hole-halo-primary-giant",
+        (b, rgen) => {
+          for (let i = 0; i < Math.round(1500 * M); i++) {
+            const th = rgen() * Math.PI * 2;
+            const R = 12.35 + rgen() * 0.55 + rgen() * 0.18;
+            const v = new THREE.Vector3(Math.cos(th) * R, Math.sin(th) * R, (rgen() - 0.5) * 0.55);
+            const c = WHITE.clone().lerp(GOLD, 0.18).lerp(VIOLET, 0.08 + rgen() * 0.18);
+            const top = 0.5 + 0.5 * Math.sin(th);
+            const blaze = Math.pow(top, 1.6);
+            b.push(v, c, 0.9 + rgen() * 1.2 + blaze * 1.1, 0.32 + 0.68 * blaze + rgen() * 0.12, rgen);
+          }
+        },
+        0.55,
+        this.holeHaloGroup
+      );
+      this.holeHaloU = primary.u;
+
+      addHaloLayer(
+        "hole-halo-secondary-giant",
+        (b, rgen) => {
+          for (let i = 0; i < Math.round(1100 * M); i++) {
+            const th = rgen() * Math.PI * 2;
+            const R = 14.1 + rgen() * 0.9 + rgen() * 0.4;
+            const v = new THREE.Vector3(Math.cos(th) * R, Math.sin(th) * R, (rgen() - 0.5) * 0.9);
+            const c = WHITE.clone().lerp(PERIWINKLE, 0.35 + rgen() * 0.3).lerp(VIOLET, 0.2);
+            const top = 0.5 + 0.5 * Math.sin(th);
+            b.push(v, c, 0.7 + rgen() * 0.9 + top * 0.5, 0.14 + 0.42 * Math.pow(top, 1.3) + rgen() * 0.08, rgen);
+          }
+        },
+        0.45,
+        this.holeHaloGroup
+      );
+
+      addHaloLayer(
+        "hole-halo-vertical-giant",
+        (b, rgen) => {
+          for (let i = 0; i < Math.round(1800 * M); i++) {
+            const th = rgen() * Math.PI * 2;
+            const R = 12.6 + rgen() * 1.8;
+            const v = new THREE.Vector3(Math.cos(th) * R, Math.sin(th) * R, (rgen() - 0.5) * 1.1);
+            const c = WHITE.clone().lerp(VIOLET, 0.18 + rgen() * 0.45);
+            const top = 0.5 + 0.5 * Math.sin(th);
+            b.push(v, c, 0.75 + rgen() * 1.1 + top * 0.7, 0.18 + 0.58 * Math.pow(top, 1.35) + rgen() * 0.1, rgen);
+          }
+        },
+        0.5,
+        this.holeHaloGroup
+      );
+
+      addHaloLayer(
+        "hole-corona-giant",
+        (b, rgen) => {
+          for (let i = 0; i < Math.round(1100 * M); i++) {
+            const dir = seededDir(rgen);
+            const rad = 13.2 + Math.pow(rgen(), 0.7) * 9.5;
+            const v = dir.multiplyScalar(rad);
+            const c = i % 3 === 0 ? GOLD.clone() : i % 3 === 1 ? VIOLET.clone().lerp(MAGENTA, 0.4) : PERIWINKLE.clone();
+            const a = 0.04 + rgen() * 0.07 + (rad < 15 ? 0.05 : 0);
+            b.push(v, c.clone().lerp(WHITE, rgen() * 0.18), 2.2 + rgen() * 3.2, a, rgen);
+          }
+        },
+        0.28,
+        this.holeGroup
+      );
+
+      // polar jets
+      {
+        const jetUp = new CloudBuilder();
+        const jetDown = new CloudBuilder();
+        const rJet = rngFor("hole-jets-giant");
+        for (let j = 0; j < 2; j++) {
+          const cb = j === 0 ? jetUp : jetDown;
+          const sign = j === 0 ? 1 : -1;
+          for (let i = 0; i < Math.round(700 * M); i++) {
+            const dist = HOLE_R + 1.2 + Math.pow(rJet(), 0.65) * 22;
+            const cone = (dist - HOLE_R) * 0.12 + rJet() * 0.9;
+            const ang = rJet() * Math.PI * 2;
+            const local = new THREE.Vector3()
+              .addScaledVector(nrm, sign * dist)
+              .addScaledVector(xA, Math.cos(ang) * cone)
+              .addScaledVector(zA, Math.sin(ang) * cone);
+            local.x += (rJet() - 0.5) * 0.6;
+            local.y += (rJet() - 0.5) * 0.6;
+            local.z += (rJet() - 0.5) * 0.6;
+            const c = j === 0 ? CYAN.clone().lerp(WHITE, 0.3 + rJet() * 0.3).lerp(GOLD, rJet() * 0.18) : VIOLET.clone().lerp(PINK, 0.3).lerp(WHITE, 0.25);
+            const fade = Math.max(0, 1 - (dist - HOLE_R) / 24);
+            cb.push(local, c, 0.6 + rJet() * 0.9, (0.18 + rJet() * 0.22) * fade * fade, rJet);
+          }
+        }
+        for (const b of [jetUp, jetDown]) {
+          const mm = mk(0.5);
+          const pts = new THREE.Points(b.geometry(), mm.mat);
+          pts.frustumCulled = false;
+          this.holeGroup.add(pts);
+          this.disposables.push(pts.geometry, mm.mat);
+          this.holeExtraUs.push(mm.u);
+        }
+      }
+
+      // infall streams
+      {
+        const infall = new CloudBuilder();
+        const rIn = rngFor("hole-infall-giant");
+        for (let s = 0; s < 6; s++) {
+          const startDir = seededDir(rIn);
+          const startR = 38 + rIn() * 14;
+          const start = startDir.multiplyScalar(startR);
+          const endA = rIn() * Math.PI * 2;
+          const endR = HOLE_R + 2 + rIn() * 12;
+          const end = new THREE.Vector3(Math.cos(endA) * endR, (rIn() - 0.5) * 1.5, Math.sin(endA) * endR);
+          for (let k = 0; k < Math.round(90 * M); k++) {
+            const t = k / (90 * M);
+            const p = start.clone().lerp(end, Math.pow(t, 0.7)).add(new THREE.Vector3((rIn() - 0.5) * 1.2, (rIn() - 0.5) * 1.2, (rIn() - 0.5) * 1.2));
+            const local = new THREE.Vector3().addScaledVector(xA, p.x).addScaledVector(nrm, p.y).addScaledVector(zA, p.z);
+            const c = PERIWINKLE.clone().lerp(WHITE, 0.2).lerp(new THREE.Color("#8aa0c0"), 0.5);
+            infall.push(local, c, 0.5 + rIn() * 0.6, 0.12 + (1 - t) * 0.18, rIn);
+          }
+        }
+        const mm = mk(0.4);
+        const pts = new THREE.Points(infall.geometry(), mm.mat);
+        pts.frustumCulled = false;
+        this.holeDiskGroup.add(pts);
+        this.disposables.push(pts.geometry, mm.mat);
+        this.holeExtraUs.push(mm.u);
+      }
+
+      // inner edge glow
+      {
+        const innerGlow = new CloudBuilder();
+        const rGlow = rngFor("hole-inner-glow");
+        for (let i = 0; i < Math.round(900 * M); i++) {
+          const th = rGlow() * Math.PI * 2;
+          const R = HOLE_R + 0.15 + rGlow() * 0.55;
+          const v = new THREE.Vector3(Math.cos(th) * R, (rGlow() - 0.5) * 0.18, Math.sin(th) * R);
+          innerGlow.push(v, WHITE.clone().lerp(GOLD, 0.35), 1.1 + rGlow() * 1.2, 0.65 + rGlow() * 0.3, rGlow);
+        }
+        const mm = mk(0.7);
+        const pts = new THREE.Points(innerGlow.geometry(), mm.mat);
+        pts.frustumCulled = false;
+        this.holeDiskGroup.add(pts);
+        this.disposables.push(pts.geometry, mm.mat);
+        this.holeExtraUs.push(mm.u);
+      }
+
+      // dusty torus
+      addHaloLayer(
+        "hole-dusty-torus",
+        (b, rgen) => {
+          for (let i = 0; i < Math.round(800 * M); i++) {
+            const th = rgen() * Math.PI * 2;
+            const R = 30 + rgen() * 12 + rgen() * 4;
+            const y = (rgen() - 0.5) * (2.2 + (R - 30) * 0.12);
+            const v = new THREE.Vector3(Math.cos(th) * R, y, Math.sin(th) * R);
+            const c = new THREE.Color("#8aa0c0").lerp(PERIWINKLE, rgen() * 0.4);
+            b.push(v, c, 0.6 + rgen() * 0.8, 0.08 + rgen() * 0.12, rgen);
+          }
+        },
+        0.32,
+        this.holeDiskGroup
+      );
+
+      /* navigation: GIANT pick radius */
       this.picks.push({
         center: this.holeCenter,
-        radius: 24,
-        info: { kind: "void", id: "silence-hole", title: "The Silence · 588 days of gravity" },
+        radius: 48,
+        info: { kind: "void", id: "silence-hole", title: "The Silence · 588 days — a giant world of waiting" },
       });
     }
 
@@ -988,6 +1197,7 @@ export class GalaxyScene {
     for (const d of this.disposables) d.dispose();
     this.disposables = [];
     this.materials = [];
+    this.holeExtraUs = [];
     this.world.clear();
     this.planets.clear();
     this.picks = [];
@@ -1274,8 +1484,9 @@ export class GalaxyScene {
         const r = spiralRadius(mid);
         const target = new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r);
         const dir = target.clone().setY(0).normalize();
-        want.copy(target).add(dir.multiplyScalar(36)).add(new THREE.Vector3(0, 11, 0));
-        look.copy(target).add(new THREE.Vector3(0, 2, 0));
+        // GIANT framing: pull back to 68u (was 36) and up to 22u (was 11) so the 12-radius horizon + 48-radius disk reads fully
+        want.copy(target).add(dir.multiplyScalar(68)).add(new THREE.Vector3(0, 22, 0));
+        look.copy(target).add(new THREE.Vector3(0, 3.5, 0));
         break;
       }
       case "present": {
@@ -1538,28 +1749,30 @@ export class GalaxyScene {
     this.updateTrail(dt);
     this.updateComets();
 
-    /* black hole: keplerian rotation, doppler beaming, lensed halo, flare */
+    /* GIANT black hole: keplerian rotation, doppler beaming, lensed halo, flare + extra layers */
     {
       this.holeFlare = Math.max(0, this.holeFlare - dt * 0.7);
-      const flare = 1 + this.holeFlare * 1.5;
+      const flare = 1 + this.holeFlare * 1.6;
       const dtH = this.reduced ? dt * 0.25 : dt;
       const pAttr = this.holeDisk.geometry.getAttribute("position") as THREE.BufferAttribute;
       const aAttr = this.holeDisk.geometry.getAttribute("aAlpha") as THREE.BufferAttribute;
       for (let i = 0; i < this.diskR.length; i++) {
-        this.diskA[i] += dtH * 26 / Math.pow(this.diskR[i], 1.5);
+        // slightly faster keplerian to keep giant disk lively: 42 vs 26, but still 1/r^1.5
+        this.diskA[i] += dtH * 42 / Math.pow(Math.max(10, this.diskR[i]), 1.5);
         const a = this.diskA[i];
         pAttr.setXYZ(i, Math.cos(a) * this.diskR[i], this.diskY[i], Math.sin(a) * this.diskR[i]);
-        const beam = 1 + 0.7 * Math.cos(a - 0.35);
+        const beam = 1 + 0.85 * Math.cos(a - 0.35);
         aAttr.setX(i, Math.min(1, this.diskBase[i] * beam * flare));
       }
       pAttr.needsUpdate = true;
       aAttr.needsUpdate = true;
-      this.holeDiskU.uOpacity.value = 0.9 + this.holeFlare * 0.5;
-      this.holeHaloU.uOpacity.value = 0.8 + this.holeFlare * 0.6;
-      this.holeHaloGroup.rotation.y = Math.atan2(
-        this.camPos.x - this.holeGroup.position.x,
-        this.camPos.z - this.holeGroup.position.z
-      );
+      this.holeDiskU.uOpacity.value = 0.95 + this.holeFlare * 0.55;
+      this.holeHaloU.uOpacity.value = 0.85 + this.holeFlare * 0.65;
+      for (const u of this.holeExtraUs) u.uOpacity.value = 0.85 + this.holeFlare * 0.5;
+      this.holeHaloGroup.rotation.y = Math.atan2(this.camPos.x - this.holeGroup.position.x, this.camPos.z - this.holeGroup.position.z);
+      // subtle breathing of the whole giant — scale pulse with flare
+      const giantPulse = 1 + this.holeFlare * 0.06 + Math.sin(t * 0.6) * 0.015;
+      this.holeGroup.scale.setScalar(giantPulse);
     }
 
     /* heart pulse */
